@@ -15,6 +15,7 @@ import (
 	"github.com/metacubex/mihomo/common/atomic"
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/loopback"
 	"github.com/metacubex/mihomo/component/nat"
 	"github.com/metacubex/mihomo/component/process"
@@ -284,6 +285,22 @@ func needLookupIP(metadata *C.Metadata) bool {
 	return resolver.MappingEnabled() && metadata.Host == "" && metadata.DstIP.IsValid()
 }
 
+type localIPChecker func(netip.Addr) (bool, error)
+
+func shouldFindProcess(metadata *C.Metadata) bool {
+	return shouldFindProcessWithLocalIP(metadata, iface.IsLocalIp)
+}
+
+func shouldFindProcessWithLocalIP(metadata *C.Metadata, isLocalIP localIPChecker) bool {
+	srcIP := metadata.SrcIP.Unmap()
+	if !srcIP.IsValid() || srcIP.IsLoopback() {
+		return true
+	}
+
+	ok, err := isLocalIP(srcIP)
+	return err != nil || ok
+}
+
 func preHandleMetadata(metadata *C.Metadata) error {
 	// preprocess enhanced-mode metadata
 	if needLookupIP(metadata) {
@@ -349,6 +366,9 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
 		FindProcess: func() {
 			if attemptProcessLookup {
 				attemptProcessLookup = false
+				if !shouldFindProcess(metadata) {
+					return
+				}
 				if !features.CMFA {
 					// normal check for process
 					uid, path, err := process.FindProcessName(metadata.NetWork.String(), metadata.SrcIP, int(metadata.SrcPort))
